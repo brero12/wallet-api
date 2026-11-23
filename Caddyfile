@@ -1,0 +1,12 @@
+{$DOMAIN} {
+    encode gzip
+
+    # metrics stay private
+    handle /actuator* {
+        respond 404
+    }
+
+    handle {
+        reverse_proxy app:8080
+    }
+}
