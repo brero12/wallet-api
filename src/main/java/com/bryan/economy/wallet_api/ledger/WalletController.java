@@ -11,9 +11,11 @@ import org.springframework.web.bind.annotation.*;
 public class WalletController {
 
     private final LedgerService ledger;
+    private final io.micrometer.core.instrument.MeterRegistry registry;
 
-    public WalletController(LedgerService ledger) {
+    public WalletController(LedgerService ledger, io.micrometer.core.instrument.MeterRegistry registry) {
         this.ledger = ledger;
+        this.registry = registry;
     }
 
     @PostMapping("/grants")
@@ -41,6 +43,9 @@ public class WalletController {
 
     /** 201 for a new transaction, 200 for an idempotent replay. */
     private ResponseEntity<LedgerResult> respond(LedgerResult result) {
+        registry.counter("ledger.transactions",
+                "type", result.type(),
+                "outcome", result.replayed() ? "replayed" : "created").increment();
         return ResponseEntity.status(result.replayed() ? HttpStatus.OK : HttpStatus.CREATED).body(result);
     }
 }

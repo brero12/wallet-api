@@ -9,8 +9,15 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 @RestControllerAdvice
 public class ApiExceptionHandler {
 
+    private final io.micrometer.core.instrument.MeterRegistry registry;
+
+    public ApiExceptionHandler(io.micrometer.core.instrument.MeterRegistry registry) {
+        this.registry = registry;
+    }
+
     @ExceptionHandler(InsufficientFundsException.class)
     public ProblemDetail insufficient(InsufficientFundsException e) {
+        registry.counter("ledger.rejections", "reason", "insufficient_funds").increment();
         return ProblemDetail.forStatusAndDetail(HttpStatus.UNPROCESSABLE_ENTITY, e.getMessage());
     }
 

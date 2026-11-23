@@ -19,8 +19,9 @@ public class LedgerService {
 
     static final String CURRENCY = "GOLD";
     static final String TOPIC = "economy.transactions";
-    static final UUID FAUCET = UUID.fromString("00000000-0000-0000-0000-000000000001");
-    static final UUID SINK   = UUID.fromString("00000000-0000-0000-0000-000000000002");
+    private static final int SHARDS = 16;
+    static final UUID[] FAUCETS = shards("00000000-0000-0000-0000-000000000001", "0002");
+    static final UUID[] SINKS   = shards("00000000-0000-0000-0000-000000000002", "0001");
 
     private record Locked(long balance, boolean allowNegative) {}
     private record Existing(UUID id, String requestHash, String type) {}
@@ -43,7 +44,7 @@ public class LedgerService {
         if (replay.isPresent()) return replay.get();
 
         UUID wallet = walletId(r.playerId());
-        move(txnId, FAUCET, wallet, r.amount());
+        move(txnId, pick(FAUCETS, txnId), wallet, r.amount());
         publish(new TxnEvent(txnId.toString(), "GRANT", r.playerId(), null,
                 r.amount(), CURRENCY, null, r.gameId(), r.region(), Instant.now()));
         return new LedgerResult(txnId, "GRANT", false);
@@ -58,7 +59,7 @@ public class LedgerService {
         if (replay.isPresent()) return replay.get();
 
         UUID wallet = walletId(r.playerId());
-        move(txnId, wallet, SINK, r.amount());
+        move(txnId, wallet, pick(SINKS, txnId), r.amount());
         publish(new TxnEvent(txnId.toString(), "PURCHASE", r.playerId(), null,
                 r.amount(), CURRENCY, r.itemId(), r.gameId(), r.region(), Instant.now()));
         return new LedgerResult(txnId, "PURCHASE", false);
@@ -205,5 +206,18 @@ public class LedgerService {
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException(e);
         }
+    }
+
+    private static UUID[] shards(String first, String group) {
+        UUID[] a = new UUID[SHARDS];
+        a[0] = UUID.fromString(first);
+        for (int i = 1; i < SHARDS; i++) {
+            a[i] = UUID.fromString("00000000-0000-0000-%s-%012x".formatted(group, i));
+        }
+        return a;
+    }
+
+    private static UUID pick(UUID[] shards, UUID txnId) {
+        return shards[Math.floorMod(txnId.hashCode(), shards.length)];
     }
 }
