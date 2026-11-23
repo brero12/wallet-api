@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Virtual Economy Ledger</title>
+    <style>
+        :root { color-scheme: light dark; --line: #8884; --ok: #1a9a4a; --bad: #d33; --muted: #888; }
+        body { font: 14px system-ui, sans-serif; max-width: 1100px; margin: 0 auto; padding: 16px; }
+        h1 { font-size: 20px; margin: 0 0 4px; }
+        h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 0 0 8px; }
+        .sub { color: var(--muted); margin-bottom: 16px; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 12px; }
+        .card { border: 1px solid var(--line); border-radius: 8px; padding: 12px; overflow-x: auto; }
+        .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 8px; }
+        input { padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: transparent; color: inherit; width: 110px; }
+        button { padding: 6px 12px; border: 1px solid var(--line); border-radius: 6px; background: transparent; color: inherit; cursor: pointer; }
+        button:hover { background: #8882; }
+        button.danger { border-color: var(--bad); color: var(--bad); }
+        table { width: 100%; border-collapse: collapse; font-size: 12px; }
+        td, th { text-align: left; padding: 3px 6px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+        .pos { color: var(--ok); } .neg { color: var(--bad); }
+        .big { font-size: 28px; font-weight: 600; }
+        .pill { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; }
+        .pill.ok { background: #1a9a4a33; color: var(--ok); } .pill.bad { background: #d3333333; color: var(--bad); }
+        #msg { min-height: 20px; margin: 8px 0; }
+        .muted { color: var(--muted); }
+    </style>
+</head>
+<body>
+<h1>Virtual Economy Ledger</h1>
+<div class="sub">Idempotent double-entry ledger, transactional outbox to Kafka, and real-time fraud detection.</div>
+
+<div class="grid">
+    <div class="card">
+        <h2>Wallet</h2>
+        <div class="row">
+            <input id="player" value="alice" aria-label="Player">
+            <span class="big" id="balance">-</span> <span class="muted">GOLD</span>
+        </div>
+        <div class="row">
+            <input id="amount" type="number" value="100" min="1" aria-label="Amount">
+            <button onclick="grant()">Grant</button>
+            <button onclick="buy()">Buy item</button>
+        </div>
+        <div class="row">
+            <input id="to" value="bob" aria-label="Recipient">
+            <button onclick="sendTo()">Transfer</button>
+        </div>
+        <div id="msg"></div>
+    </div>
+
+    <div class="card">
+        <h2>Simulate attack</h2>
+        <div class="row">
+            <button class="danger" onclick="attack('velocity')">Velocity burst</button>
+            <button class="danger" onclick="attack('travel')">Impossible travel</button>
+            <button class="danger" onclick="attack('mule')">Mule drain</button>
+        </div>
+        <div class="muted">Each runs against the real API. A flag appears below within a second or two.</div>
+    </div>
+
+    <div class="card">
+        <h2>System health</h2>
+        <div class="row"><span>Books balance (sum of all accounts = 0):</span> <span id="inv" class="pill">-</span></div>
+        <div class="row"><span>Transactions:</span> <b id="txns">-</b></div>
+        <div class="row"><span>Outbox backlog:</span> <b id="pending">-</b></div>
+        <div class="row"><span>Fraud flags:</span> <b id="flagCount">-</b></div>
+    </div>
+</div>
+
+<div class="grid" style="margin-top:12px">
+    <div class="card">
+        <h2>Fraud flags</h2>
+        <table><thead><tr><th>Time</th><th>Rule</th><th>Score</th><th>Account</th><th>Evidence</th></tr></thead>
+            <tbody id="flags"></tbody></table>
+    </div>
+    <div class="card">
+        <h2>Ledger entries (both legs)</h2>
+        <table><thead><tr><th>Time</th><th>Type</th><th>Account</th><th>Amount</th><th>Region</th></tr></thead>
+            <tbody id="entries"></tbody></table>
+    </div>
+</div>
+
+<script>
+    const $ = id => document.getElementById(id);
+    const val = id => $(id).value.trim();
+
+    async function api(method, path, body) {
+        const headers = { "Content-Type": "application/json" };
+        if (method === "POST") headers["Idempotency-Key"] = crypto.randomUUID();
+        const res = await fetch("/v1" + path, { method, headers, body: body ? JSON.stringify(body) : undefined });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.detail || data.title || ("HTTP " + res.status));
+        return data;
+    }
+
+    function say(text, bad) {
+        const m = $("msg");
+        m.textContent = text;
+        m.className = bad ? "neg" : "pos";
+    }
+
+    async function run(label, fn) {
+        try { await fn(); say(label + " OK"); } catch (e) { say(label + " failed: " + e.message, true); }
+        refresh();
+    }
+
+    const base = () => ({ gameId: "fc26", region: "NA" });
+    const grant = () => run("Grant", () => api("POST", "/grants", { ...base(), playerId: val("player"), amount: +val("amount") }));
+    const buy = () => run("Purchase", () => api("POST", "/purchases", { ...base(), playerId: val("player"), amount: +val("amount"), itemId: "sword" }));
+    const sendTo = () => run("Transfer", () => api("POST", "/transfers", { ...base(), fromPlayerId: val("player"), toPlayerId: val("to"), amount: +val("amount") }));
+    const attack = kind => run("Attack " + kind, () => api("POST", "/demo/attack/" + kind));
+
+    function fill(tbodyId, rows) {
+        const tb = $(tbodyId);
+        tb.replaceChildren(...rows.map(cells => {
+            const tr = document.createElement("tr");
+            for (const c of cells) {
+                const td = document.createElement("td");
+                td.textContent = c.text;
+                if (c.cls) td.className = c.cls;
+                tr.appendChild(td);
+            }
+            return tr;
+        }));
+    }
+
+    async function refresh() {
+        try {
+            const [flags, entries, inv] = await Promise.all([
+                api("GET", "/fraud/flags"), api("GET", "/ledger/recent"), api("GET", "/admin/invariants")]);
+
+            fill("flags", flags.map(f => [{ text: f.time }, { text: f.rule, cls: "neg" }, { text: f.score },
+                { text: f.accountId }, { text: f.evidence }]));
+            fill("entries", entries.map(e => [{ text: e.time }, { text: e.type },
+                { text: e.accountType === "PLAYER_WALLET" ? e.playerId : e.accountType },
+                { text: (e.amount > 0 ? "+" : "") + e.amount, cls: e.amount > 0 ? "pos" : "neg" }, { text: e.region }]));
+
+            $("inv").textContent = inv.balanced ? "balanced" : "OFF BY " + inv.balanceSum;
+            $("inv").className = "pill " + (inv.balanced ? "ok" : "bad");
+            $("txns").textContent = inv.transactions;
+            $("pending").textContent = inv.unpublishedOutbox;
+            $("flagCount").textContent = inv.flags;
+        } catch (e) { /* server briefly unavailable; try again next tick */ }
+
+        try {
+            $("balance").textContent = (await api("GET", "/players/" + encodeURIComponent(val("player")) + "/balance")).balance;
+        } catch (e) { $("balance").textContent = "-"; }
+    }
+
+    refresh();
+    setInterval(refresh, 1000);
+</script>
+</body>
+</html>
